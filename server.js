@@ -4,39 +4,55 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
+
 const io = new Server(server, {
-  cors: { origin: '*' }
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
 app.get('/', (req, res) => {
   res.send('Salfa Server is Running! 🟢');
 });
 
-let waitingUser = null;
+// نخزن فقط معرف المستخدم المنتظر (Socket ID)
+let waitingSocketId = null;
 
 io.on('connection', (socket) => {
-  console.log('مستخدم جديد اتصل:', socket.id);
+  console.log('🟢 مستخدم جديد اتصل:', socket.id);
 
   socket.on('start_chat', () => {
-    if (waitingUser && waitingUser.id !== socket.id) {
-      // إذا كان هناك شخص ينتظر، اجمعهما في غرفة واحدة
-      const roomId = `room_${waitingUser.id}_${socket.id}`;
-      
-      socket.join(roomId);
-      waitingUser.join(roomId);
+    // إذا كان هناك شخص ينتظر وهو ليس نفس الشخص الحالي
+    if (waitingSocketId && waitingSocketId !== socket.id) {
+      const partnerSocket = io.sockets.sockets.get(waitingSocketId);
 
-      io.to(roomId).emit('chat_started', { roomId });
+      // التأكد من أن المستخدم المنتظر ما زال متصلاً بالشبكة
+      if (partnerSocket) {
+        const roomId = `room_${waitingSocketId}_${socket.id}`;
 
-      console.log(`تم الربط بين ${socket.id} و ${waitingUser.id} في الغرفة ${roomId}`);
-      waitingUser = null;
+        // إدخال الطرفين للغرفة
+        socket.join(roomId);
+        partnerSocket.join(roomId);
+
+        // إعلام الطرفين ببدء المحادثة
+        io.to(roomId).emit('chat_started', { roomId });
+
+        console.log(`🤝 تم الربط بين ${socket.id} و ${waitingSocketId} في الغرفة: ${roomId}`);
+        waitingSocketId = null; // تفريغ الانتظار
+      } else {
+        // إذا كان المستخدم الأول فصل، اجعل الحالي هو المنتظر
+        waitingSocketId = socket.id;
+      }
     } else {
-      // إذا لم يكن هناك أحد ينتظر، اضفه للقائمة
-      waitingUser = socket;
-      console.log('مستخدم بانتظار شريك:', socket.id);
+      // لا يوجد أحد ينتظر، ضع الحالي في الانتظار
+      waitingSocketId = socket.id;
+      console.log('⏳ مستخدم ينتظر شريكاً:', socket.id);
     }
   });
 
   socket.on('send_message', (data) => {
+    // إرسال الرسالة لبقية أعضاء الغرفة
     socket.to(data.roomId).emit('receive_message', {
       text: data.message,
       senderId: socket.id
@@ -44,14 +60,15 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    if (waitingUser && waitingUser.id === socket.id) {
-      waitingUser = null;
+    // إذا غادر الشخص وهو في قائمة الانتظار، نظف القائمة
+    if (waitingSocketId === socket.id) {
+      waitingSocketId = null;
     }
-    console.log('مستخدم غادر:', socket.id);
+    console.log('🔴 مستخدم غادر:', socket.id);
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
